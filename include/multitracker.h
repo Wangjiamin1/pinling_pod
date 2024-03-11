@@ -31,12 +31,12 @@ public:
     }
 
     ///
-    const cv::Mat& GetMatBGR()
+    const cv::Mat &GetMatBGR()
     {
         return m_mBGR;
     }
     ///
-    cv::Mat& GetMatBGRWrite()
+    cv::Mat &GetMatBGRWrite()
     {
         m_umBGRGenerated = false;
         m_mGrayGenerated = false;
@@ -44,7 +44,7 @@ public:
         return m_mBGR;
     }
     ///
-    const cv::Mat& GetMatGray()
+    const cv::Mat &GetMatGray()
     {
         if (m_mGray.empty() || !m_mGrayGenerated)
         {
@@ -57,7 +57,7 @@ public:
         return m_mGray;
     }
     ///
-    const cv::UMat& GetUMatBGR()
+    const cv::UMat &GetUMatBGR()
     {
         std::thread::id lastThreadID = std::this_thread::get_id();
 
@@ -70,7 +70,7 @@ public:
         return m_umBGR;
     }
     ///
-    const cv::UMat& GetUMatGray()
+    const cv::UMat &GetUMatGray()
     {
         std::thread::id lastThreadID = std::this_thread::get_id();
 
@@ -140,7 +140,7 @@ struct FrameInfo
     {
         if (m_regions.size() != m_batchSize)
             m_regions.resize(m_batchSize);
-        for (auto& regions : m_regions)
+        for (auto &regions : m_regions)
         {
             regions.clear();
         }
@@ -151,7 +151,7 @@ struct FrameInfo
     {
         if (m_tracks.size() != m_batchSize)
             m_tracks.resize(m_batchSize);
-        for (auto& tracks : m_tracks)
+        for (auto &tracks : m_tracks)
         {
             tracks.clear();
         }
@@ -168,19 +168,10 @@ struct FrameInfo
 
     std::condition_variable m_cond;
     std::mutex m_mutex;
-    std::atomic<bool> m_captured { false };
+    std::atomic<bool> m_captured{false};
 };
 
-// struct bbox_t {
-//     unsigned int x, y, w, h;       // (x,y) - top-left corner, (w, h) - width & height of bounded box
-//     float prob;                    // confidence - probability that the object was found correctly
-//     unsigned int obj_id;           // class of object - from range [0, classes-1]
-//     unsigned int track_id;         // tracking id for video (0 - untracked, 1 - inf - tracked object)
-//     unsigned int frames_counter;   // counter of frames on which the object was detected
-//     float x_3d, y_3d, z_3d;        // center of object (in Meters) if ZED 3D Camera is used
-// };
-
-void DrawFilledRect(cv::Mat& frame, const cv::Rect& rect, cv::Scalar cl, int alpha);
+void DrawFilledRect(cv::Mat &frame, const cv::Rect &rect, cv::Scalar cl, int alpha);
 // {
 //     if (alpha)
 //     {
@@ -288,7 +279,7 @@ void DrawFilledRect(cv::Mat& frame, const cv::Rect& rect, cv::Scalar cl, int alp
 //     boxs.clear();
 //     // printf("track size:%d\n", tracks.size());
 //     for (const auto& track : tracks)
-//     {   
+//     {
 //         cv::Rect brect = track.m_rrect.boundingRect();
 //         boxs.emplace_back(brect.x, brect.y, brect.width, brect.height, track.m_type, track.m_ID.m_val, track.m_confidence);
 //     }
@@ -357,7 +348,6 @@ void DrawFilledRect(cv::Mat& frame, const cv::Rect& rect, cv::Scalar cl, int alp
 //         }
 //     }
 // }
-
 
 // void genTrackerSettings(TrackerSettings &settings);
 // {
@@ -432,7 +422,6 @@ void prepareCrosshair(cv::Mat &oriCrosshair);
 // 	cv::line(oriCrosshair, rightPtStart, rightPtEnd, color, thickness);
 // 	cv::line(oriCrosshair, downPtStart, downPtEnd, color, thickness);
 
-
 // 	int cornerW = 30;
 // 	int cornerH = 35;
 // 	int leftupX = 20;
@@ -443,7 +432,7 @@ void prepareCrosshair(cv::Mat &oriCrosshair);
 // 	int rightupY = leftupY;
 // 	int rightdownX = rightupX;
 // 	int rightdownY = leftdownY;
-	
+
 // 	//left up corner
 // 	cv::line(oriCrosshair, cv::Point(leftupX,leftupY), cv::Point(leftupX, leftupY + cornerH), color, thickness);
 // 	cv::line(oriCrosshair, cv::Point(leftupX,leftupY), cv::Point(leftupX + cornerW,leftupY), color, thickness);
@@ -462,7 +451,7 @@ void prepareCrosshair(cv::Mat &oriCrosshair);
 
 // }
 
-//input para pt is rect centerpoint
+// input para pt is rect centerpoint
 void drawCrosshair(cv::Mat &frame, cv::Point pt, double scale = 1);
 // {
 //     static cv::Mat oriCrosshair;
@@ -489,7 +478,7 @@ void drawCrosshair(cv::Mat &frame, cv::Point pt, double scale = 1);
 // 	if(pt.y >= (frame.rows - resizedTemplate.rows/2))
 // 		pt.y = frame.rows - resizedTemplate.rows/2 - 1;
 // 	resizedTemplate.copyTo(frame(cv::Rect(pt.x - resizedTemplate.cols/2, pt.y - resizedTemplate.rows/2, resizedTemplate.cols, resizedTemplate.rows)), mask);
-	
+
 // }
 /************************mt end*********************************/
 

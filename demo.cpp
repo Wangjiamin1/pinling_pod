@@ -95,6 +95,9 @@ bool zoomFlag = false;
 // UDP或TCP传输标识
 bool TCPtransform = true;
 
+bbox_t g_detRet[OBJ_NUMB_MAX_SIZE];
+int g_boxes_count = 0;
+
 static void cvtIrImg(cv::Mat &img, EN_IRIMG_MODE mode)
 {
 
@@ -400,7 +403,8 @@ void osdAndSendRTSPStreamFunc()
 // 多线程导致的图像延时，三线程会视频延时会增加两帧的延时
 std::queue<cv::Mat> frameQueue;
 uint8_t trackerStatus[9];
-std::vector<bbox_t> g_detRet;
+// std::vector<bbox_t> g_detRet;
+
 cv::Rect g_trackRect;
 
 void detectAndTrackFunc()
@@ -416,11 +420,12 @@ void detectAndTrackFunc()
     bool detOn;
 
     // 产生的检测框vector
-    std::vector<bbox_t> detRet;
+    bbox_t detRet_[OBJ_NUMB_MAX_SIZE];
+    memset(detRet_, 0x00, sizeof(*detRet_));
+    int boxes_count = 0;
     while (!interrupted.load())
     {
         detOn = true;
-
         {
 
             std::unique_lock<std::mutex> lock(frameMtx);
@@ -445,7 +450,7 @@ void detectAndTrackFunc()
             }
             else
             {
-                rtracker->update(backFrame, frontFrame, detRet, trackerStatus, center_x, center_y, trackRect);
+                rtracker->update(backFrame, frontFrame, trackerStatus, center_x, center_y, trackRect);
                 {
 
                     std::unique_lock<std::mutex> lock(trackMtx);
@@ -466,11 +471,11 @@ void detectAndTrackFunc()
         }
         if (detOn)
         {
-            rtracker->runDetectorOut(backFrame, detRet);
+            rtracker->runDetectorOut(backFrame, detRet_, boxes_count);
 
             std::unique_lock<std::mutex> lock(detectAndTrackMtx);
-
-            g_detRet = detRet;
+            g_boxes_count = boxes_count;
+            memcpy(g_detRet, detRet_, sizeof(bbox_t) * OBJ_NUMB_MAX_SIZE);
         }
     }
 }
@@ -537,6 +542,11 @@ int main()
     // rtracker = new realtracker(rgbEngine, irEngine, 12, 7);
     rtracker = new realtracker("/home/rpdzkj/wjm/pinlingv2.3.1/exe/trackercfg.yaml");
 
+    bbox_t detRet[OBJ_NUMB_MAX_SIZE];
+    memset(detRet, 0x00, sizeof(*detRet));
+    memset(g_detRet, 0x00, sizeof(*g_detRet));
+    int boxes_count = 0;
+
     // 开启viewlink串口线程，开启sony串口线程
     std::thread serialThViewLink = std::thread(serialViewLinkFunc);
     std::thread serialThSony = std::thread(serialSonyFunc);
@@ -553,15 +563,15 @@ int main()
     std::thread osdAndSendRTSPStreamTh(osdAndSendRTSPStreamFunc);
     osdAndSendRTSPStreamTh.detach();
 
-    // 开启保存视频的线程
+    // // 开启保存视频的线程
     std::thread SaveRecordVideoTh(SaveRecordVideoFunc);
     SaveRecordVideoTh.detach();
 
-    // 开启检测跟踪视频的线程
-    std::thread detectAndTrackTh(detectAndTrackFunc);
-    detectAndTrackTh.detach();
+    // // 开启检测跟踪视频的线程
+    // std::thread detectAndTrackTh(detectAndTrackFunc);
+    // detectAndTrackTh.detach();
 
-    // UDP接收上位机消息至串口线程
+    // // UDP接收上位机消息至串口线程
     std::thread UDP2serialFuncTh(UDP2serialFunc);
     UDP2serialFuncTh.detach();
 
@@ -662,8 +672,6 @@ int main()
     gettimeofday(&time, nullptr);
     tmpTime, lopTime = time.tv_sec * 1000 + time.tv_usec / 1000;
 
-    std::vector<bbox_t> detRet;
-
     while (!interrupted.load())
     {
         visCam->GetFrame(rgbImg);
@@ -763,26 +771,27 @@ int main()
         {
             {
                 std::unique_lock<std::mutex> lock(detectAndTrackMtx);
-                detRet = g_detRet;
+                boxes_count = g_boxes_count;
+
+                memcpy(detRet, g_detRet, sizeof(bbox_t) * OBJ_NUMB_MAX_SIZE);
             }
 
-            for (auto &box : detRet)
+            for (int i = 0; i < boxes_count; ++i)
             {
-                // 假设box对象有一个obj_id成员
+                // 获取当前的 bbox_t 对象
+                bbox_t &box = detRet[i];
+
+                // 假设 predefinedColors 是已定义的颜色数组，box.obj_id 是 bbox_t 结构中的成员
                 size_t colorIndex = box.obj_id % predefinedColors.size();
                 cv::Scalar color = predefinedColors[colorIndex];
 
+                // 画矩形框
                 cv::rectangle(frameQueue.front(), cv::Point(box.x, box.y), cv::Point(box.x + box.w, box.y + box.h), color, 2, 8);
 
-                // 在框的左上角添加obj_id文本
+                // 在框的左上角添加 obj_id 文本
                 std::string id_text = std::to_string(box.obj_id);
                 cv::putText(frameQueue.front(), id_text, cv::Point(box.x, box.y), cv::FONT_HERSHEY_SIMPLEX, 1, color, 2);
             }
-
-            // for (auto &box : detRet)
-            // {
-            //         cv::rectangle(frameQueue.front(), cv::Point(box.x, box.y), cv::Point(box.x + box.w, box.y + box.h), cv::Scalar(0, 255, 255), 2, 8);
-            // }
         }
         if (stSysStatus.trackOn)
         {

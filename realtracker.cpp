@@ -492,7 +492,7 @@ static inline void offsetLimitInc(int &lmt)
 void trackObj::init(const bbox_t &box, cv::Mat frame)
 {
     m_rect = cv::Rect{box.x, box.y, box.w, box.h};
-    m_prob = box.prob;
+    m_prob = box.prop;
     m_cls = box.obj_id;
     m_age = 1;
     m_lostCnt = 0;
@@ -539,7 +539,7 @@ cv::Point trackObj::center()
 
 inline void trackObj::calcVelo()
 {
-    if(m_veloBuf.size() < trackerCfg.trackVeloBufSize - 2)
+    if (m_veloBuf.size() < trackerCfg.trackVeloBufSize - 2)
     {
         m_velo[0] = 0;
         m_velo[1] = 0;
@@ -583,15 +583,15 @@ void trackObj::update(cv::Mat img, const cv::Rect &box, double ssim)
     {
         if (m_veloBuf.size() > trackerCfg.trackVeloBufSize)
             m_veloBuf.pop_front();
-        
+
 #if CAL_VELO_MODE == 0
         m_veloBuf.emplace_back(std::pair<int, int>{box.x - m_lastPos.x, box.y - m_lastPos.y});
-#elif CAL_VELO_MODE ==1
+#elif CAL_VELO_MODE == 1
         int16_t x = center().x - imgX;
         int16_t y = center().y - imgy;
-        m_veloBuf.emplace_back(std::pair<int, int>{x,y});
-#elif CAL_VELO_MODE ==2
-        m_veloBuf.emplace_back(std::pair<int, int>{0,0});
+        m_veloBuf.emplace_back(std::pair<int, int>{x, y});
+#elif CAL_VELO_MODE == 2
+        m_veloBuf.emplace_back(std::pair<int, int>{0, 0});
 #endif
 
         calcVelo();
@@ -678,11 +678,11 @@ realtracker::realtracker(std::string rgbEnginepath, std::string irEnginepath, in
     m_stracker = new itracker();
     m_stracker->setGateSize(32);
 
-    m_detector = new idetector(const_cast<char *>(rgbEnginepath.c_str()), 3, rgbClassNum,0.45,0.4);
-    m_detector->init();
+    m_detector = new CDetector(const_cast<char *>(rgbEnginepath.c_str()), 3, rgbClassNum, 0.45, 0.2);
+    m_detector->Init();
 
-    m_irDetector = new idetector(const_cast<char *>(irEnginepath.c_str()), 3, irClassNum,0.45,0.4);
-    m_irDetector->init();
+    m_irDetector = new CDetector(const_cast<char *>(irEnginepath.c_str()), 3, irClassNum, 0.45, 0.2);
+    m_irDetector->Init();
 
     m_fps = 25;
     // cv::Mat tmp = cv::Mat(720, 1280, CV_8UC3);
@@ -721,8 +721,6 @@ realtracker::realtracker(std::string cfg)
     std::string engine = config["engine"].as<std::string>();
     std::string irEngine = config["irengine"].as<std::string>();
 
-    
-
     trackerCfg.gateSize = config["gateSize"].as<int>();
     trackerCfg.visClsNum = config["visClsNum"].as<int>();
     trackerCfg.irClsNum = config["irClsNum"].as<int>();
@@ -759,11 +757,11 @@ realtracker::realtracker(std::string cfg)
     m_stracker = new itracker();
     m_stracker->setGateSize(trackerCfg.gateSize);
 
-    m_detector = new idetector(const_cast<char *>(engine.c_str()), 3, trackerCfg.visClsNum,trackerCfg.detectorVisNmsConf,trackerCfg.detectorVisConf);
-    m_detector->init();
+    m_detector = new CDetector(const_cast<char *>(engine.c_str()), 3, trackerCfg.visClsNum, trackerCfg.detectorVisNmsConf, trackerCfg.detectorVisConf);
+    m_detector->Init();
 
-    m_irDetector = new idetector(const_cast<char *>(irEngine.c_str()), 3, trackerCfg.irClsNum,trackerCfg.detectorIrNmsConf,trackerCfg.detectorIrConf);
-    m_irDetector->init();
+    m_irDetector = new CDetector(const_cast<char *>(irEngine.c_str()), 3, trackerCfg.irClsNum, trackerCfg.detectorIrNmsConf, trackerCfg.detectorIrConf);
+    m_irDetector->Init();
 
     m_fps = 25;
 
@@ -841,18 +839,18 @@ void realtracker::init(const cv::Point &pt, cv::Mat &trackImage, cv::Mat &detIma
     // }
 
     spdlog::warn("realtracker::init x:%d,y:%d, ptx:%d, pty:%d\n", iniPt.x, iniPt.y, pt.x, pt.y);
+    memset(m_detRet, 0x00, sizeof(*m_detRet));
 
-    std::vector<bbox_t> detRet;
 #if TRACKER_DEBUG
-    runDetector(image, detRet);
+    runDetector(image, m_detRet, m_boxes_count);
 #else
-    runDetectorNoDraw(detImage, detRet);
+    runDetectorNoDraw(detImage, m_detRet, m_boxes_count);
 #endif
     float minDist = 1000.f;
     int minIdx = -1;
-    for (int i = 0; i < detRet.size(); ++i)
+    for (int i = 0; i < m_boxes_count; ++i)
     {
-        cv::Point center{detRet[i].x + detRet[i].w / 2, detRet[i].y + detRet[i].h / 2};
+        cv::Point center{m_detRet[i].x + m_detRet[i].w / 2, m_detRet[i].y + m_detRet[i].h / 2};
         double dist = getDistance(iniPt, center);
         // printf("obj pos:(%d, %d), dist:%f\n", brect.tl().x, brect.tl().y, dist);
         if (dist < minDist)
@@ -867,7 +865,7 @@ void realtracker::init(const cv::Point &pt, cv::Mat &trackImage, cv::Mat &detIma
     m_state = EN_TRACKER_FSM::STRACK;
     if (minIdx != -1)
     {
-        cv::Rect closestRect{detRet[minIdx].x, detRet[minIdx].y, detRet[minIdx].w, detRet[minIdx].h};
+        cv::Rect closestRect{m_detRet[minIdx].x, m_detRet[minIdx].y, m_detRet[minIdx].w, m_detRet[minIdx].h};
         if (closestRect.contains(iniPt) || minDist < trackerCfg.initFusMinDistThres)
         {
             m_state = EN_TRACKER_FSM::DTRACK;
@@ -876,11 +874,11 @@ void realtracker::init(const cv::Point &pt, cv::Mat &trackImage, cv::Mat &detIma
             printf("\n\ninit pt with det\n");
             cv::imwrite("initdet.png", m_initTarget);
 #endif
-            m_trackCls = detRet[minIdx].obj_id;
+            m_trackCls = m_detRet[minIdx].obj_id;
             // lastId = m_frameInfo.m_tracks[0][minIdx].m_ID.m_val;
-            m_trackObj.init(detRet[minIdx], trackImage);
+            m_trackObj.init(m_detRet[minIdx], trackImage);
 
-            cv::Point center{detRet[minIdx].x + detRet[minIdx].w / 2, detRet[minIdx].y + detRet[minIdx].h / 2};
+            cv::Point center{m_detRet[minIdx].x + m_detRet[minIdx].w / 2, m_detRet[minIdx].y + m_detRet[minIdx].h / 2};
             m_stracker->init(center, trackImage);
         }
     }
@@ -954,7 +952,7 @@ void realtracker::FSM_PROC_STRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
     return;
 }
 
-void realtracker::FSM_PROC_SSEARCH(cv::Mat &frame,cv::Rect& trackRect)
+void realtracker::FSM_PROC_SSEARCH(cv::Mat &frame, cv::Rect &trackRect)
 {
     printf("\nFSM_PROC_SSEARCH\n");
     if (m_ssearchCnt++ < trackerCfg.ssearchCntThres)
@@ -983,20 +981,21 @@ void realtracker::FSM_PROC_SSEARCH(cv::Mat &frame,cv::Rect& trackRect)
         m_state = EN_TRACKER_FSM::STRACK;
         trackRect = m_strackerRet;
     }
-    
 }
 
-void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, cv::Rect& trackRect)
+void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, cv::Rect &trackRect)
 {
     printf("\nFSM_PROC_DTRACK\n");
-    std::vector<bbox_t> detRet;
+    int boxes_count = 0;
 #if TRACKER_DEBUG
     auto detimg = frame.clone();
     auto debugimg = frame.clone();
-    runDetector(detimg, detRet);
+    runDetector(detimg, m_detRet, m_boxes_count);
+    runDetector(detimg, m_detRet, m_boxes_count);
     runTracker(frame, false);
 #else
-    runDetectorNoDraw(frameDetect, detRet);
+
+    runDetectorNoDraw(frameDetect, m_detRet, m_boxes_count);
     runTrackerNoDraw(frameTracker, false);
 #endif
 
@@ -1012,8 +1011,8 @@ void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
 
     m_strackerLost = m_stracker->isLost();
 
-    printf("detRet size :%d\n", detRet.size());
-    if (detRet.size() == 0)
+    printf("detRet size :%d\n", m_boxes_count);
+    if (m_boxes_count == 0)
     {
         if (m_strackerLost)
         {
@@ -1077,20 +1076,21 @@ void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
         return dist1 < dist2;
     };
 
-    std::sort(detRet.begin(), detRet.end(), cmpDist);
+    // std::sort(detRet.begin(), detRet.end(), cmpDist);
+    std::sort(m_detRet, m_detRet + m_boxes_count, cmpDist);
 
-    cv::Point center{detRet.front().x + detRet.front().w / 2, detRet.front().y + detRet.front().h / 2};
+    cv::Point center{m_detRet[0].x + m_detRet[0].w / 2, m_detRet[0].y + m_detRet[0].h / 2};
     minDist = getDistance(m_trackObj.center(), center);
     cv::Rect closestSSIMRect;
-    // int areaDif = m_trackObj.m_initRect.width - detRet.front().w + m_trackObj.m_initRect.height - detRet.front().h;
-    int areaDif = m_trackObj.m_rect.width - detRet.front().w + m_trackObj.m_rect.height - detRet.front().h;
+    // int areaDif = m_trackObj.m_initRect.width - m_detRet[0].w + m_trackObj.m_initRect.height - m_detRet[0].h;
+    int areaDif = m_trackObj.m_rect.width - m_detRet[0].w + m_trackObj.m_rect.height - m_detRet[0].h;
     areaDif = abs(areaDif);
     double maxSSIM = 0;
     double maxSSIMDif = 0;
 
     // calculate hist start
     {
-        int histCalCnt = detRet.size() > trackerCfg.featureCalCntThres ? trackerCfg.featureCalCntThres : detRet.size();
+        int histCalCnt = m_boxes_count > trackerCfg.featureCalCntThres ? trackerCfg.featureCalCntThres : m_boxes_count;
         std::vector<cv::Mat> detHists;
         detHists.resize(histCalCnt);
         cv::Scalar colormap[3] = {{0, 255, 0}, {255, 0, 0}, {0, 0, 255}};
@@ -1111,7 +1111,7 @@ void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
             //     channels.push_back(j);
             // }
 
-            cv::Rect roi = cv::Rect{detRet[i].x, detRet[i].y, detRet[i].w, detRet[i].h};
+            cv::Rect roi = cv::Rect{m_detRet[i].x, m_detRet[i].y, m_detRet[i].w, m_detRet[i].h};
             Clamp(roi.x, roi.width, frameTracker.cols);
             Clamp(roi.y, roi.height, frameTracker.rows);
             // std::vector<cv::Mat> regROI = { frame(roi) };
@@ -1121,7 +1121,7 @@ void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
             // double res = cv::compareHist(detHists[i], m_trackObj.m_hist, cv::HISTCMP_BHATTACHARYYA);
             double res = calculateSSIM(frameTracker(roi), m_trackObj.m_patch);
 
-            cv::Point center{detRet[i].x + detRet[i].w / 2, detRet[i].y + detRet[i].h / 2};
+            cv::Point center{m_detRet[i].x + m_detRet[i].w / 2, m_detRet[i].y + m_detRet[i].h / 2};
 #if TRACKER_DEBUG
             cv::line(debugimg, center, m_trackObj.center(), colormap[i], 2);
             cv::putText(debugimg, std::to_string(res), center, cv::FONT_HERSHEY_COMPLEX, 0.8, colormap[i], 1, 8, 0);
@@ -1174,7 +1174,7 @@ void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
     }
 
     spdlog::debug("minDistThres:{}, areaDifThres:{}", minDistThres, areaDifThres);
-    cv::Rect derRect = cv::Rect{detRet.front().x, detRet.front().y, detRet.front().w, detRet.front().h};
+    cv::Rect derRect = cv::Rect{m_detRet[0].x, m_detRet[0].y, m_detRet[0].w, m_detRet[0].h};
     Clamp(derRect.x, derRect.width, frameTracker.cols);
     Clamp(derRect.y, derRect.height, frameTracker.rows);
 
@@ -1326,7 +1326,7 @@ void realtracker::FSM_PROC_DTRACK(cv::Mat &frameDetect, cv::Mat &frameTracker, c
     m_state = EN_TRACKER_FSM::DTRACK;
 }
 
-void realtracker::fsmUpdate(cv::Mat &frameDetect, cv::Mat &frameTracker, cv::Rect& trackRect)
+void realtracker::fsmUpdate(cv::Mat &frameDetect, cv::Mat &frameTracker, cv::Rect &trackRect)
 {
 
     switch (m_state)
@@ -1341,7 +1341,7 @@ void realtracker::fsmUpdate(cv::Mat &frameDetect, cv::Mat &frameTracker, cv::Rec
         FSM_PROC_SEARCH(frameDetect);
         break;
     case EN_TRACKER_FSM::SSEARCH:
-        FSM_PROC_SSEARCH(frameDetect,trackRect);
+        FSM_PROC_SSEARCH(frameDetect, trackRect);
         break;
     default:
         break;
@@ -1353,13 +1353,13 @@ EN_TRACKER_FSM realtracker::update(cv::Mat &frame, std::vector<TrackingObject> &
     return m_state;
 }
 
-EN_TRACKER_FSM realtracker::update(cv::Mat &frameDetect, cv::Mat &frameTracker, std::vector<bbox_t> &detRet, uint8_t *trackerStatus, int &x_, int &y_,cv::Rect& trackRect)
+EN_TRACKER_FSM realtracker::update(cv::Mat &frameDetect, cv::Mat &frameTracker, uint8_t *trackerStatus, int &x_, int &y_, cv::Rect &trackRect)
 {
     printf("realtracker::update start\n");
 
     sw.reset();
 
-    fsmUpdate(frameDetect, frameTracker,trackRect);
+    fsmUpdate(frameDetect, frameTracker, trackRect);
 
     // uint8_t trackerStatus[9];
     memset(trackerStatus, 0, 9);
@@ -1471,10 +1471,10 @@ static inline int boxDif(bbox_t &box1, bbox_t &box2)
     return (abs(int(box1.x - box2.x)) + abs(int(box1.y - box2.y)) + abs(int(box1.w - box2.w)) + abs(int(box1.h - box2.h)));
 }
 
-void realtracker::runDetector(cv::Mat &frame, std::vector<bbox_t> &detRet)
+void realtracker::runDetector(cv::Mat &frame, bbox_t *detRet, int &boxs_count)
 {
     printf("realtracker::runDetector\n");
-    std::vector<bbox_t> boxs;
+    memset(detRet, 0x00, sizeof(*detRet));
     cv::Mat finalDet, rawDet;
     rawDet = frame.clone();
 
@@ -1482,54 +1482,43 @@ void realtracker::runDetector(cv::Mat &frame, std::vector<bbox_t> &detRet)
 
     if (!m_irFrame)
     {
-        m_detector->process(rawDet, boxs);
+        m_detector->ImgInference(frame, detRet, boxs_count);
     }
     else
     {
-        m_irDetector->process(rawDet, boxs);
+        m_irDetector->ImgInference(frame, detRet, boxs_count);
     }
 
-    printf("box size:%d\n", boxs.size());
-    // for (int i = 0; i < boxs.size(); i++)
-    // {
-    //     // printf("box-->x:%d, y:%d, w:%d, h:%d, conf:%f, cls:%d\n", boxs[i].x, boxs[i].y, boxs[i].w, boxs[i].h, boxs[i].prob, boxs[i].obj_id);
-    //     for (int j = i + 1; j < boxs.size(); ++j)
-    //     {
-    //         // printf("\tbox-->x:%d, y:%d, w:%d, h:%d, conf:%f, cls:%d, diff:%d\n", boxs[j].x, boxs[j].y, boxs[j].w, boxs[j].h, boxs[j].prob, boxs[j].obj_id, boxDif(boxs[i], boxs[j]));
+    printf("box size:%d\n", boxs_count);
 
-    //         if (boxDif(boxs[i], boxs[j]) < 5)
-    //         {
-    //             boxs.erase(boxs.begin() + j);
-    //             --j;
-    //         }
-    //     }
-    // }
-
-    detRet = boxs;
+    // detRet = boxs;
 
     return;
 }
-void realtracker::runDetectorOut(cv::Mat &frame, std::vector<bbox_t> &detRet)
+void realtracker::runDetectorOut(cv::Mat &frame, bbox_t *detRet, int &boxs_count)
 {
     // printf("realtracker::runDetectorOut\n");
+    memset(detRet, 0x00, sizeof(*detRet));
     if (!m_irFrame)
     {
-        m_detector->process(frame, detRet);
+        m_detector->ImgInference(frame, detRet, boxs_count);
     }
     else
     {
-        m_irDetector->process(frame, detRet);
+        m_irDetector->ImgInference(frame, detRet, boxs_count);
     }
-       for (int i = 0; i < detRet.size(); i++)
+    for (int i = 0; i < boxs_count; i++)
     {
         // printf("box-->x:%d, y:%d, w:%d, h:%d, conf:%f, cls:%d\n", boxs[i].x, boxs[i].y, boxs[i].w, boxs[i].h, boxs[i].prob, boxs[i].obj_id);
-        for (int j = i + 1; j < detRet.size(); ++j)
+        for (int j = i + 1; j < boxs_count; ++j)
         {
             // printf("\tbox-->x:%d, y:%d, w:%d, h:%d, conf:%f, cls:%d, diff:%d\n", boxs[j].x, boxs[j].y, boxs[j].w, boxs[j].h, boxs[j].prob, boxs[j].obj_id, boxDif(boxs[i], boxs[j]));
 
             if (boxDif(detRet[i], detRet[j]) < trackerCfg.detectorBoxDifThres)
             {
-                detRet.erase(detRet.begin() + j);
+                detRet[j].w = 0;
+                detRet[j].h = 0;
+                // detRet.erase(detRet.begin() + j);
                 --j;
             }
         }
@@ -1554,19 +1543,19 @@ void realtracker::runDetectorOut(cv::Mat &frame, std::vector<bbox_t> &detRet)
 
     // return;
 }
-void realtracker::runDetectorNoDraw(cv::Mat &frame, std::vector<bbox_t> &detRet)
+void realtracker::runDetectorNoDraw(cv::Mat &frame, bbox_t *detRet, int &boxs_count)
 {
     printf("realtracker::runDetectorNoDraw\n");
-    detRet.clear();
+    memset(detRet, 0x00, sizeof(*detRet));
     // m_frameInfo.m_frames[0].GetMatBGRWrite() = frame;
     // m_frameInfo.m_frames[0].GetMatBGRWrite() = frame.clone();
     if (!m_irFrame)
     {
-        m_detector->process(frame, detRet);
+        m_detector->ImgInference(frame, detRet, boxs_count);
     }
     else
     {
-        m_irDetector->process(frame, detRet);
+        m_irDetector->ImgInference(frame, detRet, boxs_count);
     }
 }
 
