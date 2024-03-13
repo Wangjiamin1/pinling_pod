@@ -18,6 +18,8 @@
 #include <deque>
 #include <numeric>
 
+#include <chrono>
+
 extern ST_A1_CONFIG stA1Cfg;
 extern ST_A2_CONFIG stA2Cfg;
 extern ST_C1_CONFIG stC1Cfg;
@@ -79,12 +81,12 @@ cv::VideoWriter rtspWriterr;
 bool inObjCenterLock = false;
 
 // TCP客户端连接句柄
-int client_sockfd;
+int client_sockfd_tcp = -1;
 
 // 存储UDP客户端地址信息
 struct sockaddr_in remote_addr;
 // UDP客户端连接句柄
-int server_sockfd;
+int server_sockfd = -1;
 
 realtracker *rtracker;
 
@@ -97,6 +99,10 @@ bool TCPtransform = true;
 
 bbox_t g_detRet[OBJ_NUMB_MAX_SIZE];
 int g_boxes_count = 0;
+
+std::vector<cv::Mat> mat_queue;
+std::mutex mat_mutex;
+std::condition_variable mat_cond;
 
 static void cvtIrImg(cv::Mat &img, EN_IRIMG_MODE mode)
 {
@@ -158,57 +164,69 @@ void printHex(uint8_t *buffer, size_t length)
 // TCP服务端线程程序，收到TCP消息解析后转发至小板串口
 void TCP2serialFunc()
 {
-
-    struct sockaddr_in my_addr;
-    struct sockaddr_in remote_addr;
+    int server_sockfd_tcp = -1;
+    sockaddr_in my_addr;
+    sockaddr_in remote_addr;
     socklen_t sin_size;
-    uint8_t recv_buf[BUFSIZ];
-    uint8_t send_buf[BUFSIZ];
     memset(&my_addr, 0, sizeof(my_addr));
+
     my_addr.sin_family = AF_INET;
     my_addr.sin_addr.s_addr = INADDR_ANY;
-    my_addr.sin_port = htons(2001);
+    my_addr.sin_port = htons(2000);
 
-    if ((server_sockfd = socket(PF_INET, SOCK_STREAM, 0)) < 0)
+    server_sockfd_tcp = socket(PF_INET, SOCK_STREAM, 0);
+    if (server_sockfd_tcp < 0)
     {
-        std::cout << "socket error" << std::endl;
+        std::cerr << "socket error" << std::endl;
         return;
     }
 
-    if (bind(server_sockfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) < 0)
+    // 设置SO_REUSEADDR选项
+    int yes = 1;
+    if (setsockopt(server_sockfd_tcp, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1)
     {
-        std::cout << "bind error" << std::endl;
+        std::cerr << "setsockopt SO_REUSEADDR error" << std::endl;
+        close(server_sockfd_tcp);
         return;
     }
 
-    if (listen(server_sockfd, 5) < 0)
+    if (bind(server_sockfd_tcp, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) < 0)
     {
-        std::cout << "listen error" << std::endl;
+        std::cerr << "bind error" << std::endl;
+        close(server_sockfd_tcp);
         return;
     }
 
-    std::cout << "Server is listening on port ..." << std::endl;
+    if (listen(server_sockfd_tcp, 5) < 0)
+    {
+        std::cerr << "listen error" << std::endl;
+        close(server_sockfd_tcp);
+        return;
+    }
 
-    std::vector<uint8_t> receiveBuffer;
-    const std::vector<uint8_t> frameStart = {0xeb, 0x90};
-    const std::vector<uint8_t> frameStart_2 = {0x55, 0xaa, 0xdc};
+    std::cout << "Server is listening on port 2000..." << std::endl;
 
     while (!interrupted.load())
-    { // Main accept() loop
+    {
         sin_size = sizeof(struct sockaddr_in);
-        if ((client_sockfd = accept(server_sockfd, (struct sockaddr *)&remote_addr, &sin_size)) < 0)
+        client_sockfd_tcp = accept(server_sockfd_tcp, (struct sockaddr *)&remote_addr, &sin_size);
+        if (client_sockfd_tcp < 0)
         {
-            std::cout << "accept error" << std::endl;
-            continue; // Continue to the next iteration to accept a new connection
+            std::cerr << "accept error" << std::endl;
+            if (interrupted.load())
+            {
+                break; // 退出循环前检查是否应该中断
+            }
+            continue; // 继续下一次循环以接受新连接
         }
 
-        std::cout << "Accepted client " << inet_ntoa(remote_addr.sin_addr) << std::endl;
-        // send(client_sockfd, "Welcome to server", 17, 0);
+        std::cout << "Accepted client: " << inet_ntoa(remote_addr.sin_addr) << std::endl;
 
         while (!interrupted.load())
-        { // Communication loop
+        {
+            uint8_t recv_buf[BUFSIZ];
             memset(recv_buf, 0, BUFSIZ);
-            ssize_t retLen = recv(client_sockfd, recv_buf, BUFSIZ, 0);
+            ssize_t retLen = recv(client_sockfd_tcp, recv_buf, BUFSIZ, 0);
             if (retLen > 0)
             {
                 TCPtransform = true;
@@ -217,10 +235,33 @@ void TCP2serialFunc()
                 // printf("==============>");
                 // printHex(recv_buf, retLen);
             }
+            else if (retLen == 0)
+            {
+                std::cout << "Client disconnected." << std::endl;
+                break; // 客户端断开连接
+            }
+            else
+            {
+                std::cerr << "recv error" << std::endl;
+                if (interrupted.load())
+                {
+                    break; // 退出循环前检查是否应该中断
+                }
+                continue; // 继续下一次循环以尝试再次接收数据
+            }
         }
 
-        close(client_sockfd); // Close the client socket before waiting for next connection
+        if (client_sockfd_tcp != -1)
+        {
+            close(client_sockfd_tcp); // 关闭客户端套接字
+            client_sockfd_tcp = -1;   // 将客户端套接字设置为无效
+        }
         std::cout << "Waiting for new connection..." << std::endl;
+    }
+
+    if (server_sockfd_tcp != -1)
+    {
+        close(server_sockfd_tcp); // 关闭服务器套接字
     }
 }
 
@@ -249,7 +290,7 @@ void serial2TCPFunc()
                 // std::cout << std::endl;
                 buffRcvData[2] = retLen & 0xFF;
                 buffRcvData[retLen + 3] = viewlink_protocal_tcp_checksum(buffRcvData + 2);
-                int len = send(client_sockfd, buffRcvData, 4 + retLen, 0);
+                int len = send(client_sockfd_tcp, buffRcvData, 4 + retLen, 0);
             }
         }
     }
@@ -436,7 +477,6 @@ void detectAndTrackFunc()
 
         if (stSysStatus.trackOn)
         {
-            detOn = false;
             if (!stSysStatus.trackerInited)
             {
                 stSysStatus.detOn = false;
@@ -467,10 +507,15 @@ void detectAndTrackFunc()
                     stSysStatus.trackerInited = false;
                     zoomFlag = false;
                 }
+                if (stSysStatus.detOn)
+                {
+                    stSysStatus.trackOn = false;
+                }
             }
         }
-        if (detOn)
+        else
         {
+
             rtracker->runDetectorOut(backFrame, detRet_, boxes_count);
 
             std::unique_lock<std::mutex> lock(detectAndTrackMtx);
@@ -560,8 +605,8 @@ int main()
     serial2TCPFuncTh.detach();
 
     // 开启推流线程
-    std::thread osdAndSendRTSPStreamTh(osdAndSendRTSPStreamFunc);
-    osdAndSendRTSPStreamTh.detach();
+    // std::thread osdAndSendRTSPStreamTh(osdAndSendRTSPStreamFunc);
+    // osdAndSendRTSPStreamTh.detach();
 
     // // 开启保存视频的线程
     std::thread SaveRecordVideoTh(SaveRecordVideoFunc);
@@ -672,8 +717,18 @@ int main()
     gettimeofday(&time, nullptr);
     tmpTime, lopTime = time.tv_sec * 1000 + time.tv_usec / 1000;
 
+    auto write_interval = std::chrono::milliseconds(1000 / 30); // 30 fps
+    auto last_write_time = std::chrono::steady_clock::now() - write_interval;
+    int framequeue_size = 3;
+    int framequeue_index = 0;
+
+    cv::Rect trackRect;
+
+    cv::Mat dispFrame;
+
     while (!interrupted.load())
     {
+        auto current_time = std::chrono::steady_clock::now();
         visCam->GetFrame(rgbImg);
         irCam->GetFrame(oriIrImg);
 
@@ -721,12 +776,10 @@ int main()
             break;
         }
 
-        {
-            std::unique_lock<std::mutex> lock(frameMtx);
-            frameQueue.push(frame.clone());
-        }
+        frameQueue.push(frame.clone());
+
         frameVar.notify_one();
-        if (frameQueue.size() < 4)
+        if (frameQueue.size() <= framequeue_size)
         {
             continue;
         }
@@ -767,15 +820,59 @@ int main()
             isRecording = false;
         }
 
-        if (stSysStatus.detOn)
+        if (stSysStatus.trackOn)
         {
+            if (framequeue_index < framequeue_size)
             {
-                std::unique_lock<std::mutex> lock(detectAndTrackMtx);
-                boxes_count = g_boxes_count;
-
-                memcpy(detRet, g_detRet, sizeof(bbox_t) * OBJ_NUMB_MAX_SIZE);
+                framequeue_index++;
+                rtracker->runDetectorOut(frameQueue.back(), detRet, boxes_count);
             }
+            else
+            {
+                if (!stSysStatus.trackerInited)
+                {
+                    stSysStatus.detOn = false;
+                    spdlog::debug("start tracking, init Rect:");
+                    stSysStatus.trackerGateSize = stSysStatus.trackerGateSize * (sqrt(sqrt(zoomGrade)));
+                    zoomGrade = 1;
+                    rtracker->setGateSize(stSysStatus.trackerGateSize);
+                    rtracker->reset();
+                    rtracker->init(stSysStatus.trackAssignPoint, frameQueue.front(), frameQueue.back());
+                    stSysStatus.trackerInited = true;
+                }
+                else
+                {
+                    rtracker->update(frameQueue.back(), frameQueue.front(), trackerStatus, center_x, center_y, trackRect);
+                    {
+                        cv::rectangle(frameQueue.front(), trackRect, cv::Scalar(255, 255, 255), 3, 8);
+                    }
 
+                    spdlog::debug("tracker status:{}", trackerStatus[4]);
+
+                    TrackerMissDistanceResultFeedbackToDown(trackerStatus);
+                    if (zoomFlag)
+                    {
+                        stSysStatus.trackAssignPoint.x = center_x;
+                        stSysStatus.trackAssignPoint.y = center_y;
+                        stSysStatus.trackerInited = false;
+                        zoomFlag = false;
+                    }
+                    if (stSysStatus.detOn)
+                    {
+                        stSysStatus.trackOn = false;
+                    }
+                }
+            }
+        }
+        else if (stSysStatus.detOn)
+        {
+
+            rtracker->runDetectorOut(frameQueue.back(), detRet, boxes_count);
+            if (framequeue_index < framequeue_size)
+            {
+                framequeue_index++;
+                boxes_count = 0;
+            }
             for (int i = 0; i < boxes_count; ++i)
             {
                 // 获取当前的 bbox_t 对象
@@ -793,26 +890,59 @@ int main()
                 cv::putText(frameQueue.front(), id_text, cv::Point(box.x, box.y), cv::FONT_HERSHEY_SIMPLEX, 1, color, 2);
             }
         }
-        if (stSysStatus.trackOn)
+        else
         {
-            {
+            framequeue_index = 0;
+        }
 
-                std::unique_lock<std::mutex> lock(trackMtx);
-                cv::rectangle(frameQueue.front(), g_trackRect, cv::Scalar(255, 255, 255), 3, 8);
+        if (!stSysStatus.osdCtrl.osdSwitch)
+        {
+            if (!stSysStatus.osdCtrl.attitudeAngleSwitch)
+            {
+                // 绘制吊舱当前方位角度滚轴
+                PaintRollAngleAxis(frameQueue.front(), stSysStatus.rollAngle);
+
+                // 绘制吊舱当前俯仰角度滚轴
+                PaintPitchAngleAxis(frameQueue.front(), stSysStatus.pitchAngle);
+            }
+            if (!stSysStatus.osdCtrl.crosshairSwitch)
+            {
+                // 绘制中心十字`
+                PaintCrossPattern(frameQueue.front(), stSysStatus.rollAngle, stSysStatus.pitchAngle);
+            }
+            if (!stSysStatus.osdCtrl.GPSSwitch)
+            {
+                // 绘制经纬度、海拔高度等坐标参数
+                PaintCoordinate(frameQueue.front());
+            }
+
+            // 绘制界面上其他参数
+            PaintViewPara(frameQueue.front());
+            if (!stSysStatus.osdCtrl.MissToTargetSwitch)
+            {
+                // 绘制脱靶量
+                PaintTrackerMissDistance(frameQueue.front());
             }
         }
 
+        cv::resize(frameQueue.front(), dispFrame, cv::Size(1280, 720), cv::INTER_NEAREST);
+        if (isRecording)
         {
-            std::unique_lock<std::mutex> lock(OSDMtx);
-            OSDFrame = frameQueue.front().clone();
-            OSDconVar.notify_one();
+            mat_queue.push_back(dispFrame);
         }
 
-        nFrames++;
+        if (isNeedTakePhoto)
         {
-            std::unique_lock<std::mutex> lock(frameMtx);
-            frameQueue.pop();
+            std::string currTimeStr = CreateDirAndReturnCurrTimeStr("photos");
+            std::string savePicFileName = "photos/" + currTimeStr + ".png";
+            cv::imwrite(savePicFileName, dispFrame);
+            isNeedTakePhoto = false;
         }
+
+        frameQueue.pop();
+        rtspWriterr << dispFrame;
+
+        nFrames++;
 
         if (nFrames % 60 == 0)
         {
@@ -1029,29 +1159,32 @@ void serialSonyFunc()
 
 void SaveRecordVideoFunc()
 {
-    cv::Mat mat;
+    cv::Mat mat = cv::Mat::zeros(1280, 720, CV_8UC3);
     while (!interrupted.load())
     {
         if (isRecording)
         {
             auto start = std::chrono::high_resolution_clock::now();
-            if (writer != nullptr)
+            if (writer != nullptr && mat_queue.size())
             {
-                std::unique_lock<std::mutex> lock(m_mtx);
-                writer->write(saveFrame);
+                {
+                    std::unique_lock<std::mutex> lock(m_mtx);
+                    // mat = cv::Mat::zeros(1280, 720, CV_8UC3);
+                    writer->write(mat_queue.front());
+                    mat_queue.erase(mat_queue.begin());
+                }
+                // std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                // auto end = std::chrono::high_resolution_clock::now();
+                // // 计算线程的运行时间，单位为毫秒
+                // auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+                // std::cout << "save video single-frame time: " << std::dec << duration.count() << " ms" << std::endl;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-
-            auto end = std::chrono::high_resolution_clock::now();
-
-            // 计算线程的运行时间，单位为毫秒
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-            std::cout << "save video single-frame time: " << std::dec << duration.count() << " ms" << std::endl;
         }
         if (!isRecording && writer != nullptr)
         {
             writer->release();
             writer = nullptr;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
     }
 }
