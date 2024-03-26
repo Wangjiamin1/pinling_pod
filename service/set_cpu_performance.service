@@ -7,6 +7,7 @@ ExecStartPre=/bin/sleep 6
 ExecStart=/usr/bin/cpufreq-set -g performance -c 0
 ExecStart=/usr/bin/cpufreq-set -g performance -c 4
 ExecStart=/usr/bin/cpufreq-set -g performance -c 6
+ExecStart=/usr/bin/set_npu_freq.sh
 
 [Install]
 WantedBy=multi-user.target

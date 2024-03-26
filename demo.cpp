@@ -56,9 +56,9 @@ void signalHandler(int signum)
 }
 
 // viewlink通信串口，接收sony相机通信串口，发送sony相机通信串口
-Serial serialViewLink, serialRevSony, serialSendSony;
+Serial serialViewLink, serialRevSony, serialSendSony, serialTCP;
 
-SerialPort serialTCP;
+// SerialPort serialTCP;
 // 线程同步条件变量
 std::condition_variable saveVideoconVar, rtspconVar, OSDconVar, frameVar;
 // 线程同步互斥变量
@@ -553,18 +553,17 @@ int main()
     std::deque<double> fpsCalculater;
 
     // 串口初始化
-    serialViewLink.set_serial(1);                             //"/dev/ttyTHS1"
-    serialRevSony.set_serial(2);                              //"/dev/ttyUSB0"
-    serialSendSony.set_serial(3);                             //"/dev/ttyS6"
-    serialTCP.set_serial("/dev/ttyUSB0", B115200, 8, 'N', 0); //"/dev/ttyS6"
+    serialViewLink.set_serial(1); // "/dev/ttyTHS1"
+    serialRevSony.set_serial(2);  // "/dev/ttyS0"
+    serialSendSony.set_serial(3); // "/dev/ttyS6"
+    serialTCP.set_serial(4);      // "/dev/ttyUSB0"
+    // serialTCP.set_serial("/dev/ttyUSB0", B115200, 8, 'N', 0); // "/dev/ttyUSB0"
 
     // 读取配置文件加载模型路径、设备名称等配置
-    std::string cfgpath = "/home/rpdzkj/wjm/pinlingv2.3.1/exe/config.yaml";
+    std::string cfgpath = "../exe/config.yaml";
     YAML::Node config = YAML::LoadFile(cfgpath);
     std::string visi_dev = config["visi_dev"].as<std::string>();
     std::string ir_dev = config["ir_dev"].as<std::string>();
-    std::string rgbEngine = config["engine"].as<std::string>();
-    std::string irEngine = config["irengine"].as<std::string>();
     std::string streamType = config["streamType"].as<std::string>();
     UDPSendPort = config["UDPSendPort"].as<uint16_t>();
 
@@ -584,8 +583,7 @@ int main()
     }
 
     // 创建目标跟踪示例
-    // rtracker = new realtracker(rgbEngine, irEngine, 12, 7);
-    rtracker = new realtracker("/home/rpdzkj/wjm/pinlingv2.3.1/exe/trackercfg.yaml");
+    rtracker = new realtracker("../exe/trackercfg.yaml");
 
     bbox_t detRet[OBJ_NUMB_MAX_SIZE];
     memset(detRet, 0x00, sizeof(*detRet));
@@ -799,7 +797,6 @@ int main()
             std::string saveVideoFileName = "/home/rpdzkj/wjm/videos_recorded/" + currTimeStr + ".mp4";
             if (writer == nullptr)
             {
-
                 writer = new cv::VideoWriter();
             }
             std::string pipeline = "appsrc ! videoconvert ! video/x-raw,format=I420 ! queue max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 ! x264enc ! h264parse ! mp4mux ! filesink location=" + saveVideoFileName;

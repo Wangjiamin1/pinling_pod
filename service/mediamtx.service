@@ -2,8 +2,8 @@
 Description=启动 Mete 应用
 
 [Service]
-WorkingDirectory=/home/rpdzkj/env//mediamtx_
-ExecStart=/home/rpdzkj/env//mediamtx_/mediamtx
+WorkingDirectory=/home/rpdzkj/code/mediamtx_
+ExecStart=/home/rpdzkj/code/mediamtx_/mediamtx
 Restart=always
 User=rpdzkj
 # 以下两行是可选的，如果你需要设置环境变量

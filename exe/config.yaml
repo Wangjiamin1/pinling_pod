@@ -10,10 +10,6 @@ visStreamAdd: rtspsrc location=rtsp://192.168.3.119:554/stream0 latency=0 ! rtph
   ! h264parse ! omxh264dec ! videoconvert ! appsink max-buffers=1 drop=true sync=false
 mipiVisStreamAdd: v4l2src device=/dev/video11 ! video/x-raw,format=NV12,width=1920,height=1080,framerate=30/1
   ! videoconvert ! appsink
-engine1: /home/rpdzkj/code/pinlingv3/rknn_yolox_detector_v2/visdrone_6_rga.rknn
-irengine1: /home/rpdzkj/code/pinlingv3/rknn_yolox_detector_v2/visdrone_6_rga.rknn
-engine: /home/rpdzkj/wjm/pinlingv2.3.1/exe/400epoch.rknn
-irengine: /home/rpdzkj/code/robusttracker-0229/self_v0/model/yolox_RK3588_i8-ir.rknn
 videopath: /home/nx/data/ir_far.mp4
 cameraUDPContorlPort: 2000
 videoCompressionQuality: low
